@@ -1,9 +1,8 @@
 from MongoConnection import MongoConnection
-import pymongo
 from NPMFetcher import get_npm_repos
-import time
-import json, urllib.request
+import json
 from bson.objectid import ObjectId
+import pymongo
 
 
 valid = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '.']
@@ -77,5 +76,17 @@ def read_repos():
             print(repo)
 
 
-read_repos()
-#prioritize()
+def update_repos():
+    collection = MongoConnection().get_collection('npm_repos')
+
+    cursor = collection.find({'updated': {'$exists': False}}, cursor_type=pymongo.CursorType.TAILABLE_AWAIT)#.sort('numeric_version', pymongo.DESCENDING)
+    print(cursor.count())
+    for item in cursor:
+        print('loop')
+        print(type(item))
+        print(item)
+
+        break
+
+#read_repos()
+update_repos()

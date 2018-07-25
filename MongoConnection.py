@@ -8,3 +8,6 @@ class MongoConnection:
 
     def get_collection(self, collection):
         return self.db[collection]
+
+    def get_db(self):
+        return self.db
