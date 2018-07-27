@@ -1,13 +1,17 @@
+from struct import pack
+
 from MongoConnection import MongoConnection
 from NPMFetcher import get_npm_repos
 import json
 from bson.objectid import ObjectId
-import pymongo
+import urllib
+import requests
+
 
 
 valid = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '.']
 
-items_to_keep = ['_id', 'keywords', 'repository', 'maintainers', '_npmVersion', 'dependencies', 'author']
+items_to_keep = ['_id', '_npmVersion']
 
 
 class JSONEncoder(json.JSONEncoder):
@@ -66,6 +70,7 @@ def read_repos():
                 repo['id'] = repo['id'][:repo['id'].find('@')]
                 try:
                     repo['numeric_version'] = version_to_float(repo['_npmVersion'])
+                    del repo['_npmVersion']
                 except:
                     repo['numeric_version'] = 0
                 JSONEncoder().encode(repo)
@@ -78,15 +83,17 @@ def read_repos():
 
 def update_repos():
     collection = MongoConnection().get_collection('npm_repos')
+    cursor = collection.find_one({'updated': {'$exists': False}}, sort=[('numeric_version', -1)])
 
-    cursor = collection.find({'updated': {'$exists': False}}, cursor_type=pymongo.CursorType.TAILABLE_AWAIT)#.sort('numeric_version', pymongo.DESCENDING)
-    print(cursor.count())
-    for item in cursor:
-        print('loop')
-        print(type(item))
-        print(item)
+    while cursor is not None:
+        res = requests.get('https://registry.npmjs.org/'+cursor['id'])
+        if res.status_code == 200:  # check that the request went through
+            parsed = json.loads(res.content.decode())
+            print(json.dumps(parsed))
 
+        cursor = collection.find_one({'updated': {'$exists': True}}, sort=[('numeric_version', -1)])
         break
+
 
 #read_repos()
 update_repos()
