@@ -85,12 +85,14 @@ def read_repos():
 
 
 def update_repos():
-    collection = MongoConnection().get_collection('npm_repos')
+    connection = MongoConnection()
+    collection = connection.get_collection('npm_repos')
     total = collection.find({'updated': {'$exists': False}}).count()
     currentRepo = collection.find_one({'updated': {'$exists': False}}, sort=[('numeric_version', -1)])
     count = 0
     t0 = time.time()
     error = False
+    connection.client.close()
     while currentRepo is not None:
         parsed = {'updated': 'npm_fail'}
         try:
@@ -107,9 +109,10 @@ def update_repos():
                 print('failed to update: ', currentRepo['id'])
                 pass
             if error:
+                print('removing dollar sign from:', currentRepo['id'])
                 parsed = remove_dollar_sign(parsed)
                 error = False
-            collection.update({'_id': currentRepo['_id']}, {"$set": parsed})
+            collection.update_one({'_id': currentRepo['_id']}, {"$set": parsed})
             count += 1
             t1 = time.time()
             print((count/total)*100, end='')
@@ -120,8 +123,11 @@ def update_repos():
             total_time = timedelta(seconds=int(total_time))
             d = datetime(1, 1, 1) + total_time
             print("%d days %d hours %d minutes %d seconds left" % (d.day - 1, d.hour, d.minute, d.second))
-            while (datetime.now()-begin).total_seconds()<1:
-                pass
+            if count % 200:
+                print('reopening connection')
+                connection.client.close()
+                connection = MongoConnection()
+                collection = connection.get_collection('npm_repos')
         except:
             error = True
             print('Error at project id: ', currentRepo['id'])
