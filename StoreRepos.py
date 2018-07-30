@@ -7,8 +7,6 @@ from bson.objectid import ObjectId
 import requests
 import time
 from datetime import datetime, timedelta
-import logging
-import logging.config
 
 
 
@@ -127,7 +125,6 @@ def update_repos():
         except:
             error = True
             print('Error at project id: ', currentRepo['id'])
-            logging.warning('Retrying to update: ', currentRepo['id'])
         #except:
             #print('error')
             #break
@@ -149,6 +146,5 @@ def remove_dollar_sign(original):
         return original
 
 
-logging.basicConfig(filename='npm_update.log', level=logging.WARNING)
 #read_repos()
 update_repos()
