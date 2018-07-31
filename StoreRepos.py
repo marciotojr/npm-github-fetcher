@@ -91,14 +91,14 @@ def update_repos():
     currentRepo = collection.find_one({'updated': {'$exists': False}}, sort=[('numeric_version', -1)])
     count = 0
     t0 = time.time()
+    longest = t0-t0
     error = False
     connection.client.close()
     while currentRepo is not None:
+        t2 = time.time()
         parsed = {'updated': 'npm_fail'}
         try:
-            begin = datetime.now()
-            res = requests.get('https://registry.npmjs.org/'+currentRepo['id'])
-
+            res = requests.get('https://registry.npmjs.org/'+currentRepo['id'], timeout=5)
             if res.status_code == 200:  # check that the request went through
                 parsed = json.loads(res.content.decode())
                 del parsed['_id']
@@ -107,7 +107,6 @@ def update_repos():
                 print('updating repo: ' + currentRepo['id'], end=' ')
             else:
                 print('failed to update: ', currentRepo['id'])
-                pass
             if error:
                 print('removing dollar sign from:', currentRepo['id'])
                 parsed = remove_dollar_sign(parsed)
@@ -119,21 +118,25 @@ def update_repos():
             print('%')
             currentRepo = collection.find_one({'updated': {'$exists': False}}, sort=[('numeric_version', -1)])
             total_time = (t1-t0)
+            if t1-t2 > longest:
+                longest = t1-t2
+                d = datetime(1, 1, 1) + timedelta(seconds=int(longest))
+                print('new longest time "%d:%d:%d.%d"' % (d.hour, d.minute, d.second, d.microsecond))
             total_time = total_time * total / count
             total_time = timedelta(seconds=int(total_time))
             d = datetime(1, 1, 1) + total_time
             print("%d days %d hours %d minutes %d seconds left" % (d.day - 1, d.hour, d.minute, d.second))
-            if count % 200:
+            if count % 200 == 0:
+                d = datetime(1, 1, 1) + timedelta(seconds=int(longest))
+                print('longest time so far "%d:%d:%d.%d"' % (d.hour, d.minute, d.second, d.microsecond))
                 print('reopening connection')
                 connection.client.close()
                 connection = MongoConnection()
                 collection = connection.get_collection('npm_repos')
-        except:
+        except Exception as e:
             error = True
             print('Error at project id: ', currentRepo['id'])
-        #except:
-            #print('error')
-            #break
+            print(e)
 
 
 def remove_dollar_sign(original):
