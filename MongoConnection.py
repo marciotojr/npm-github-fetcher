@@ -2,7 +2,7 @@ from pymongo import MongoClient
 
 class MongoConnection:
 
-    def __init__(self, host='0.tcp.ngrok.io', port=10092, db='social_seco'):
+    def __init__(self, host='localhost', port=27017, db='social_seco'):
         self.client = MongoClient(host, port)
         self.db = self.client[db]
 
