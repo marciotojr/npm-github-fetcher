@@ -1,173 +1,127 @@
-from pymongo import MongoClient
-import json, urllib.request
+from operator import concat
+
+from MongoConnection import MongoConnection
+# from NPMFetcher import get_npm_repos
+import json
 from bson.objectid import ObjectId
-import mysql.connector
+import requests
+import time
+from datetime import datetime, timedelta
+from GithubUsers import get_user
+from JSON_utils import trim_json, JSONEncoder
 
-user_removable = ('git@github.com:', )
-
-
-def get_mysql_cursor():
-    db = mysql.connector.connection.MySQLConnection(user='root', password='',
-                                                     host='localhost',
-                                                     database='npm-github-fetcher')
-    return db, db.cursor()
-
-
-class JSONEncoder(json.JSONEncoder):
-    def default(self, o):
-        if isinstance(o, ObjectId):
-            return str(o)
-        return json.JSONEncoder.default(self, o)
+auth_token = 'token 7ef69b2368773c233c5f7d29039eadf9cb55c05c'
+user_agent = 'Mozilla/5.0'
+payload = {'Authorization': auth_token, 'User-Agent': user_agent}
+repo_keys_to_keep = ['id', 'name', 'full_name', 'owner', 'description', 'homepage', 'stargazers_count', 'has_wiki'
+    , 'watchers_count', 'forks_count', 'watchers', 'organization', 'network_count', 'subscribers_count']
 
 
-def create_document(repo_id, obj):
-    obj['id'] = obj['_id']
-    repo_id = str(repo_id)
-    for i in range(12-len(repo_id)):
-        repo_id = '0'+repo_id
+def update_repos():
+    connection = MongoConnection()
+    collection = connection.get_collection('npm_repos')
+    total = collection.find({'updated': 'npm_json'}).count()
+    currentRepo = collection.find_one({'updated': 'npm_json'}, sort=[('numeric_version', -1)])
+    count = 0
+    t0 = time.time()
+    error = False
+    connection.client.close()
+    while currentRepo is not None:
+        print(get_github_user_repo(currentRepo))
+        parsed = {'updated': 'github_fail'}
+        try:
+            res = requests.get('https://registry.npmjs.org/' + currentRepo['id'])
 
-    for versions in obj['versions']:
-        version = obj['versions'][versions]
-        for key in version.keys():
-            new_key = key.replace("_", "")
-            if new_key != key:
-                obj['versions'][versions][new_key] = obj['versions'][versions][key]
-                del obj['versions'][versions][key]
-
-    del obj['_id']
-    obj['_id'] = ObjectId(str.encode(repo_id))
-    JSONEncoder().encode(obj)
-    return obj
-
-
-def get_npm_repo_info(serial_id, repo_id):
-
-    client = MongoClient('localhost', 27017)
-    db = client['social_seco']
-    collection = db['npm-repos']
-
-    parsed = create_document(serial_id, fetch_repo_info(repo_id))
-    collection.insert(parsed, check_keys=False)
-
-
-def fetch_repo_info(repo_id):
-    with urllib.request.urlopen("https://registry.npmjs.org/" + repo_id) as url:
-        data = json.loads(url.read().decode())
-        print(data)
-
-
-def get_config_variable(key):
-    client = MongoClient('localhost', 27017)
-    db = client['social_seco']
-    collection = db['config-variables']
-    variable_value = collection.find_one({'key': key})
-    return int(variable_value['value'])
-
-
-def check_username(username, action):
-    if username[0] == '-':
-        action['passed'] = False
-    else:
-        for character in username:
-            if not (str.isupper(character) or str.islower(character) or str.isnumeric(character) or character == '-'):
-                action['passed'] = False
-                break
-
-
-def check_repo_name(repo_name, action):
-    for character in repo_name:
-        if not (str.isupper(character) or str.islower(character) or str.isnumeric(character) or character in ['/', '_',
-                                                                                                              '-', '.',
-                                                                                                              '#']):
-            action['passed'] = False
-            break
-
-
-def clean():
-    # TODO make it a while
-    if True:
-        count = 0
-
-        total = 0
-
-        dbm, cursor = get_mysql_cursor()
-
-        query = 'SELECT COUNT(*) FROM npmprojects WHERE repo NOT LIKE ""'
-        cursor.execute(query)
-
-        for lines in cursor:
-            total = int(lines[0])
-
-        dbm, cursor = get_mysql_cursor()
-
-        query = 'SELECT id, repo FROM npmprojects WHERE repo NOT LIKE ""'
-        cursor.execute(query)
-
-        for queried_data in cursor:
-
-            action = {'delete': False, 'passed': True, 'change': False}
-
-            repo_data = queried_data[1].split('/')
-
-            if len(repo_data) != 2:
-                action['passed'] = False
-                if len(repo_data) < 2:
-                    delete = True
+            if res.status_code == 200:  # check that the request went through
+                parsed = json.loads(res.content.decode())
+                del parsed['_id']
+                parsed['numeric_version'] = currentRepo['numeric_version']
+                parsed['updated'] = 'npm_json'
+                print('updating repo: ' + currentRepo['id'], end=' ')
             else:
-                repo_name = repo_data[1]
-                user_name = repo_data[0]
-
-                if len(repo_data[0]) == 0 or len(repo_data[1]) == 0:
-                    action['passed'] = False
-                    action['delete'] = True
-                else:
-
-                    if repo_data[0][0] == '-':
-                        action['passed'] = False
-                    else:
-                        for item in user_removable:
-                            if repo_data[0] == item:
-                                action['change'] = True
-                                repo_name = repo_name.replace(item, '')
-
-                        for character in repo_data[0]:
-                            if not (str.isupper(character) or str.islower(character) or str.isnumeric(character) or character == '-'):
-                                action['passed'] = False
-                                break
-
-            db, update_cursor = get_mysql_cursor()
-
-            if delete:
-                query = 'UPDATE npmprojects SET repo="" WHERE id = %s'
-
-                data = [queried_data[0]]
-
-                update_cursor.execute(query, data)
-
-                update_cursor.close()
-
-                db.commit()
-
+                print('failed to update: ', currentRepo['id'])
+                pass
+            if error:
+                print('removing dollar sign from:', currentRepo['id'])
+                error = False
+            # collection.update_one({'_id': currentRepo['_id']}, {"$set": parsed})
             count += 1
-            percentage = (count / total) * 100
+            t1 = time.time()
+            print((count / total) * 100, end='')
+            print('%')
+            currentRepo = collection.find_one({'updated': 'npm_json'}, sort=[('numeric_version', -1)])
+            total_time = (t1 - t0)
+            total_time = total_time * total / count
+            total_time = timedelta(seconds=int(total_time))
+            d = datetime(1, 1, 1) + total_time
+            print("%d days %d hours %d minutes %d seconds left" % (d.day - 1, d.hour, d.minute, d.second))
+            if count % 200 == 0:
+                print('reopening connection')
+                connection.client.close()
+                connection = MongoConnection()
+                collection = connection.get_collection('npm_repos')
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            error = True
+            print('Error at project id: ', currentRepo['id'])
+            print(e)
+            print(type(e))
+        # except:
+        # print('error')di
+        # break
 
-            if action['passed']:
-                color = '\033[92m'
+
+def get_github_user_repo(document):  # returns a tuple with user and repo
+    if isinstance(document, dict):
+        if 'repository' in document:
+            if 'url' in document['repository'] and 'type' in document['repository'] and document['repository'][
+                'type'] == 'git':
+                url = document['repository']['url']
+                url = url[0: url.rfind('.git')]
+                repo = url[url.rfind('/') + 1:]
+                url = url[:url.rfind('/')]
+                user = url[url.rfind('/') + 1:]
+                return user, repo
             else:
-                color = '\033[91m'
-            if action['delete']:
-                color = '\033[93m'
-            if not action['passed'] or action['delete']:
-                print(color, "%.2f" % percentage, end='')
-                print("%\t", queried_data[1])
+                return None  # TODO return error for non-github repositories and log if possible
+        else:
+            if 'versions' in document:
+                return get_github_user_repo(document['versions'])
+    elif isinstance(document, list):
+        for version in document:
+            for keys in version:
+                value = version[keys]
+                if value is not None:
+                    return value
+        return None  # TODO verify in the list of versions
+    else:
+        return None  # TODO return no repository found error and log if possible
 
-        db.commit()
 
-        # disconnect from server
-        db.close()
+def fetch_github_info(path_or_owner, repo=None):
+    owner, repo = solve_owner_repo_names(path_or_owner, repo)
+    content, limit, headers = get_request('repos/' + owner + '/' + repo)
+    document = trim_json(content, repo_keys_to_keep)
+    user = get_user(document['owner'])
+
+
+def solve_owner_repo_names(path_or_owner, repo=None):
+    if repo is not None:
+        owner = path_or_owner
+    else:
+        owner = path_or_owner[:path_or_owner.find('/')]
+        repo = path_or_owner[path_or_owner.find('/') + 1:]
+    return owner, repo
+
+
+def get_request(path):
+    r = requests.get('https://api.github.com/' + path, headers=payload)
+    return r.text, r.headers.get('X-RateLimit-Remaining'), r.headers
 
 
 
 
-#get_npm_repo_info(100673, 'express')
-clean()
+
+# update_repos()
+fetch_github_info('expressjs/express')

@@ -7,6 +7,7 @@ from bson.objectid import ObjectId
 import requests
 import time
 from datetime import datetime, timedelta
+from JSON_utils import trim_json, JSONEncoder
 
 
 
@@ -14,13 +15,6 @@ valid = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '.']
 
 items_to_keep_file = ['_id', '_npmVersion']
 items_to_keep_web = ['author']
-
-
-class JSONEncoder(json.JSONEncoder):
-    def default(self, o):
-        if isinstance(o, ObjectId):
-            return str(o)
-        return json.JSONEncoder.default(self, o)
 
 
 def get_repo(repo):
@@ -38,7 +32,6 @@ def get_repo(repo):
         del data['_id']
         return data
     except:
-
         return None
 
 
@@ -115,7 +108,7 @@ def update_repos():
                 parsed = remove_dollar_sign(parsed)
             collection.update_one({'_id': currentRepo['_id']}, {"$set": parsed})
             count += 1
-            t1 = time.time()
+            t1 = time.time()L
             print((count/total)*100, end='')
             print('%')
             currentRepo = collection.find_one({'updated': {'$exists': False}})
