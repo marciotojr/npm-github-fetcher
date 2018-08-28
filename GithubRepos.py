@@ -7,14 +7,16 @@ from bson.objectid import ObjectId
 import requests
 import time
 from datetime import datetime, timedelta
-from GithubUsers import get_user
-from JSON_utils import trim_json, JSONEncoder
+from GithubUsers import get_user, format_user_list
+from JSON_utils import trim_json, JSONEncoder, parse
+from Errors import NonGitRepoError, NoRepositoryFoundError, NonGithubRepoError
 
 auth_token = 'token 7ef69b2368773c233c5f7d29039eadf9cb55c05c'
 user_agent = 'Mozilla/5.0'
 payload = {'Authorization': auth_token, 'User-Agent': user_agent}
 repo_keys_to_keep = ['id', 'name', 'full_name', 'owner', 'description', 'homepage', 'stargazers_count', 'has_wiki'
     , 'watchers_count', 'forks_count', 'watchers', 'organization', 'network_count', 'subscribers_count']
+user_keys_to_keep = ['id', 'contributions']
 
 
 def update_repos():
@@ -73,18 +75,22 @@ def update_repos():
 
 
 def get_github_user_repo(document):  # returns a tuple with user and repo
+    document = parse(document)
     if isinstance(document, dict):
         if 'repository' in document:
-            if 'url' in document['repository'] and 'type' in document['repository'] and document['repository'][
-                'type'] == 'git':
-                url = document['repository']['url']
-                url = url[0: url.rfind('.git')]
-                repo = url[url.rfind('/') + 1:]
-                url = url[:url.rfind('/')]
-                user = url[url.rfind('/') + 1:]
-                return user, repo
+            if 'url' in document['repository'] and 'type' in document['repository'] and document['repository']['type'] \
+                    == 'git':
+                try:
+                    url = document['repository']['url']
+                    url = url[0: url.rfind('.git')]
+                    repo = url[url.rfind('/') + 1:]
+                    url = url[:url.rfind('/')]
+                    user = url[url.rfind('/') + 1:]
+                    return user, repo
+                except Exception:
+                    raise NonGithubRepoError('This repository is not in a github format')
             else:
-                return None  # TODO return error for non-github repositories and log if possible
+                raise NonGitRepoError('The repository is not a Git repository')
         else:
             if 'versions' in document:
                 return get_github_user_repo(document['versions'])
@@ -93,18 +99,41 @@ def get_github_user_repo(document):  # returns a tuple with user and repo
             for keys in version:
                 value = version[keys]
                 if value is not None:
-                    return value
-        return None  # TODO verify in the list of versions
-    else:
-        return None  # TODO return no repository found error and log if possible
+                    try:
+                        return get_github_user_repo(value)
+                    except NonGithubRepoError or NonGitRepoError or NoRepositoryFoundError:
+                        continue
+        raise NoRepositoryFoundError('No repository was found for this project')
+    raise NoRepositoryFoundError('No repository was found for this project')
 
 
 def fetch_github_info(path_or_owner, repo=None):
     owner, repo = solve_owner_repo_names(path_or_owner, repo)
     content, limit, headers = get_request('repos/' + owner + '/' + repo)
     document = trim_json(content, repo_keys_to_keep)
-    user = get_user(document['owner'])
+    user = get_user(document['owner'], False)
+    document['owner'] = user['id']
+    if 'organization' in document:
+        organization = get_user(document['organization'], False)
+        document['organization'] = organization['id']
+    document['contributors'] = get_contributors(owner, repo)
+    user_list = []
+    for contributor in document['contributors']:
+        user = {}
+        for key in contributor:
+            if key in user_keys_to_keep:
+                user[key] = contributor[key]
+        user_list.append(user)
+    del document['contributors']
+    document['contributors'] = user_list
+    print(json.dumps(document))
 
+
+def get_contributors(path_or_owner, repo=None):
+    owner, repo = solve_owner_repo_names(path_or_owner, repo)
+    document, limit, headers = get_request('repos/' + owner + '/' + repo + '/contributors')
+    document = format_user_list(document)
+    return document
 
 def solve_owner_repo_names(path_or_owner, repo=None):
     if repo is not None:

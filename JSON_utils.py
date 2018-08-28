@@ -1,5 +1,6 @@
 import json
 from bson.objectid import ObjectId
+from Errors import InvalidJSONConversion
 
 
 class JSONEncoder(json.JSONEncoder):
@@ -17,3 +18,11 @@ def trim_json(document, keys_to_keep):
         if key in keys_to_keep:
             value[key] = document[key]
     return value
+
+
+def parse(document):
+    if isinstance(document, dict):
+        return document
+    elif isinstance(document, str):
+        return json.loads(document)
+    raise InvalidJSONConversion('This is not in a format able to be converted into JSON')
