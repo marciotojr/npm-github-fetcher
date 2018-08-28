@@ -12,3 +12,7 @@ class NonGithubRepoError(NonGitRepoError):
 
 class InvalidJSONConversion(RuntimeError):
     pass
+
+
+class GithubAccessLimitReachedError(RuntimeError):
+    pass

@@ -9,7 +9,8 @@ import time
 from datetime import datetime, timedelta
 from GithubUsers import get_user, format_user_list
 from JSON_utils import trim_json, JSONEncoder, parse
-from Errors import NonGitRepoError, NoRepositoryFoundError, NonGithubRepoError
+from Errors import NonGitRepoError, NoRepositoryFoundError, NonGithubRepoError, GithubAccessLimitReachedError
+import string
 
 auth_token = 'token 7ef69b2368773c233c5f7d29039eadf9cb55c05c'
 user_agent = 'Mozilla/5.0'
@@ -19,59 +20,54 @@ repo_keys_to_keep = ['id', 'name', 'full_name', 'owner', 'description', 'homepag
 user_keys_to_keep = ['id', 'contributions']
 
 
+connection = MongoConnection()
+
+def next_npm_project():
+    collection = connection.get_collection('npm_repos')
+    return collection.find_one({'updated': 'npm_json'}, sort=[('numeric_version', -1)])
+
 def update_repos():
     connection = MongoConnection()
-    collection = connection.get_collection('npm_repos')
-    total = collection.find({'updated': 'npm_json'}).count()
-    currentRepo = collection.find_one({'updated': 'npm_json'}, sort=[('numeric_version', -1)])
+    npm_collection = connection.get_collection('npm_repos')
+    total = npm_collection.find({'updated': 'npm_json'}).count()
+    connection = MongoConnection()
+    collection = connection.get_collection('github_repos')
+
+    current_repo = next_npm_project()
     count = 0
     t0 = time.time()
     error = False
-    connection.client.close()
-    while currentRepo is not None:
-        print(get_github_user_repo(currentRepo))
-        parsed = {'updated': 'github_fail'}
+    while current_repo is not None:
         try:
-            res = requests.get('https://registry.npmjs.org/' + currentRepo['id'])
+            print('Analyzing project ', current_repo['id'])
 
-            if res.status_code == 200:  # check that the request went through
-                parsed = json.loads(res.content.decode())
-                del parsed['_id']
-                parsed['numeric_version'] = currentRepo['numeric_version']
-                parsed['updated'] = 'npm_json'
-                print('updating repo: ' + currentRepo['id'], end=' ')
-            else:
-                print('failed to update: ', currentRepo['id'])
-                pass
-            if error:
-                print('removing dollar sign from:', currentRepo['id'])
-                error = False
-            # collection.update_one({'_id': currentRepo['_id']}, {"$set": parsed})
+            owner, repo = get_github_user_repo(current_repo)
+
+            repo_info = fetch_github_info(owner, repo)
+
             count += 1
             t1 = time.time()
             print((count / total) * 100, end='')
             print('%')
-            currentRepo = collection.find_one({'updated': 'npm_json'}, sort=[('numeric_version', -1)])
             total_time = (t1 - t0)
             total_time = total_time * total / count
             total_time = timedelta(seconds=int(total_time))
             d = datetime(1, 1, 1) + total_time
             print("%d days %d hours %d minutes %d seconds left" % (d.day - 1, d.hour, d.minute, d.second))
-            if count % 200 == 0:
-                print('reopening connection')
-                connection.client.close()
-                connection = MongoConnection()
-                collection = connection.get_collection('npm_repos')
+            repo_info['_id'] = current_repo['_id']
+            collection.insert(repo_info, check_keys=False)
+            npm_collection.update_one({'_id': current_repo['_id']}, {"$set": {'updated': 'github_updated'}})
         except KeyboardInterrupt:
             break
-        except Exception as e:
-            error = True
-            print('Error at project id: ', currentRepo['id'])
-            print(e)
-            print(type(e))
-        # except:
-        # print('error')di
-        # break
+        except NonGitRepoError:
+            npm_collection.update_one({'_id': current_repo['_id']}, {"$set": {'updated': 'github_fail_non_git'}})
+        except NoRepositoryFoundError:
+            npm_collection.update_one({'_id': current_repo['_id']}, {"$set": {'updated': 'github_fail_no_repo'}})
+        except NonGithubRepoError:
+            npm_collection.update_one({'_id': current_repo['_id']}, {"$set": {'updated': 'github_non_github'}})
+        finally:
+            current_repo = next_npm_project()
+
 
 
 def get_github_user_repo(document):  # returns a tuple with user and repo
@@ -86,6 +82,11 @@ def get_github_user_repo(document):  # returns a tuple with user and repo
                     repo = url[url.rfind('/') + 1:]
                     url = url[:url.rfind('/')]
                     user = url[url.rfind('/') + 1:]
+                    if user == '' or repo == '' or user is None or repo is None \
+                            or user[0] not in string.ascii_letters \
+                            or len(([c for c in user if c not in (string.ascii_letters + string.digits)]))>0\
+                            or len(([c for c in user if c not in (string.ascii_letters + string.digits + '-')]))>0:
+                        raise NonGithubRepoError('This repository is not in a github format')
                     return user, repo
                 except Exception:
                     raise NonGithubRepoError('This repository is not in a github format')
@@ -126,7 +127,7 @@ def fetch_github_info(path_or_owner, repo=None):
         user_list.append(user)
     del document['contributors']
     document['contributors'] = user_list
-    print(json.dumps(document))
+    return document
 
 
 def get_contributors(path_or_owner, repo=None):
@@ -146,11 +147,13 @@ def solve_owner_repo_names(path_or_owner, repo=None):
 
 def get_request(path):
     r = requests.get('https://api.github.com/' + path, headers=payload)
+    if r.headers.get('X-RateLimit-Remaining') == 0:
+        raise GithubAccessLimitReachedError('Github access limit reached')
     return r.text, r.headers.get('X-RateLimit-Remaining'), r.headers
 
 
 
 
 
-# update_repos()
-fetch_github_info('expressjs/express')
+update_repos()
+#fetch_github_info('expressjs/express')

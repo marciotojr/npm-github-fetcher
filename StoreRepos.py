@@ -108,7 +108,7 @@ def update_repos():
                 parsed = remove_dollar_sign(parsed)
             collection.update_one({'_id': currentRepo['_id']}, {"$set": parsed})
             count += 1
-            t1 = time.time()L
+            t1 = time.time()
             print((count/total)*100, end='')
             print('%')
             currentRepo = collection.find_one({'updated': {'$exists': False}})
