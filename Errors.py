@@ -16,3 +16,11 @@ class InvalidJSONConversion(RuntimeError):
 
 class GithubAccessLimitReachedError(RuntimeError):
     pass
+
+
+class NoUserUnupdated(RuntimeError):
+    pass
+
+
+class NoPageFound(RuntimeError):
+    pass
